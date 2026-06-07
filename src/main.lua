@@ -9,8 +9,8 @@ logMsg("Random Engine Failure script loaded successfully!")
 -- =============================================================================
 -- CONFIGURATION / PARAMETERS
 -- =============================================================================
-local MIN_WAIT_MINUTES = 5      -- Minimum time to wait before first potential failure
-local MAX_WAIT_MINUTES = 30     -- Maximum time to wait before first potential failure
+local MIN_WAIT_MINUTES = 0.5      -- Minimum time to wait before first potential failure
+local MAX_WAIT_MINUTES = 2     -- Maximum time to wait before first potential failure
 local MIN_THROTTLE_REDUCTION = 0.5  -- At least 50% power reduction
 local MAX_THROTTLE_REDUCTION = 1.0  -- Up to 100% power reduction (idle)
 
@@ -24,14 +24,17 @@ local failure_time = 0
 local target_engine = -1
 local reduction_amount = 0
 local script_enabled = true
+local clamp_logged = false
 
 -- =============================================================================
 -- DATAREFS
 -- =============================================================================
 -- Number of engines on current aircraft
-dataref("NUM_ENGINES", "sim/flightmodel/engines/num_engines", "readonly")
--- Array of throttle settings (0.0 to 1.0)
-dataref("THROTTLE_RATIO", "sim/flightmodel/engine/ENGN_thro", "writable")
+dataref("NUM_ENGINES", "sim/aircraft/engine/acf_num_engines", "readonly")
+-- Array of throttle settings (0.0 to 1.0) — actual engine throttle ratio (read-only)
+THROTTLE_RATIO = dataref_table("sim/flightmodel/engine/ENGN_thro")
+-- Writable throttle command when override is enabled
+THROTTLE_RATIO_USE = dataref_table("sim/flightmodel/engine/ENGN_thro_use")
 -- Override throttle control (1 = override active)
 dataref("THROTTLE_OVERRIDE", "sim/operation/override/override_throttles", "writable")
 
@@ -39,8 +42,23 @@ dataref("THROTTLE_OVERRIDE", "sim/operation/override/override_throttles", "writa
 -- CORE LOGIC
 -- =============================================================================
 
+-- Helper: format an engines throttle snapshot like [1: 0.73, 2: 0.70]
+local function throttle_snapshot()
+    local parts = {}
+    local n = math.max(0, NUM_ENGINES or 0)
+    for i = 0, n - 1 do
+        parts[#parts + 1] = string.format("%d: %.2f", i + 1, THROTTLE_RATIO[i] or -1)
+    end
+    return "[" .. table.concat(parts, ", ") .. "]"
+end
+
+-- Helper: common timestamp string
+local function now_ts()
+    return os.date("%Y-%m-%d %H:%M:%S")
+end
+
 function setup_random_failure()
-    if NUM_ENGINES < 2 then
+    if (NUM_ENGINES or 0) < 2 then
         logMsg("Random Engine Failure: Single engine aircraft detected. Script inactive.")
         script_enabled = false
         return
@@ -49,6 +67,11 @@ function setup_random_failure()
     script_enabled = true
     failure_triggered = false
     THROTTLE_OVERRIDE = 0
+    clamp_logged = false
+
+    -- Baseline log of current state
+    logMsg(string.format("Random Engine Failure: [%s] Initialized. Engines: %d, Throttles: %s",
+        now_ts(), NUM_ENGINES or -1, throttle_snapshot()))
 
     -- Pick a random engine (0-indexed in dataref array)
     target_engine = math.random(0, NUM_ENGINES - 1)
@@ -59,9 +82,12 @@ function setup_random_failure()
     -- Pick a random time
     local wait_seconds = math.random(MIN_WAIT_MINUTES * 60, MAX_WAIT_MINUTES * 60)
     failure_time = os.clock() + wait_seconds
-    
-    logMsg(string.format("Random Engine Failure: Scheduled for engine %d in %d seconds (Reduction: %.1f%%)", 
-        target_engine + 1, wait_seconds, reduction_amount * 100))
+
+    local scheduled_ts = os.date("%Y-%m-%d %H:%M:%S", os.time() + wait_seconds)
+    local max_allowed = 1.0 - reduction_amount
+    local curr_th = THROTTLE_RATIO[target_engine] or -1
+    logMsg(string.format("Random Engine Failure: [%s] Schedule set: engine=%d, wait=%ds (at %s), reduction=%.1f%%, max_allowed=%.2f, curr_throttle=%.2f, snapshot=%s",
+        now_ts(), target_engine + 1, wait_seconds, scheduled_ts, reduction_amount * 100, max_allowed, curr_th, throttle_snapshot()))
 end
 
 function process_failure()
@@ -72,7 +98,10 @@ function process_failure()
         if os.clock() >= failure_time then
             failure_triggered = true
             THROTTLE_OVERRIDE = 1 -- Activate override
-            logMsg("Random Engine Failure: FAILURE TRIGGERED on engine " .. (target_engine + 1))
+            local max_allowed = 1.0 - reduction_amount
+            local curr = THROTTLE_RATIO[target_engine] or -1
+            logMsg(string.format("Random Engine Failure: [%s] FAILURE TRIGGERED on engine %d | reduction=%.1f%% | max_allowed=%.2f | curr_throttle=%.2f | snapshot=%s | override=1",
+                now_ts(), target_engine + 1, reduction_amount * 100, max_allowed, curr, throttle_snapshot()))
         end
     end
 
@@ -83,7 +112,13 @@ function process_failure()
         
         local max_allowed = 1.0 - reduction_amount
         if THROTTLE_RATIO[target_engine] > max_allowed then
-            THROTTLE_RATIO[target_engine] = max_allowed
+            local prev_actual = THROTTLE_RATIO[target_engine] or -1
+            THROTTLE_RATIO_USE[target_engine] = max_allowed
+            if not clamp_logged then
+                logMsg(string.format("Random Engine Failure: [%s] Clamp applied on engine %d | prev_actual=%.2f -> cmd=%.2f | max_allowed=%.2f | snapshot=%s",
+                    now_ts(), target_engine + 1, prev_actual, max_allowed, max_allowed, throttle_snapshot()))
+                clamp_logged = true
+            end
         end
     end
 end
@@ -152,4 +187,9 @@ function draw_failure_status()
 end
 
 do_every_draw("draw_failure_status()")
-do_on_imgui("engine_failure_gui()")
+-- Register ImGui callback only if available (some FlyWithLua builds lack ImGui)
+if type(do_on_imgui) == "function" and imgui ~= nil then
+    do_on_imgui("engine_failure_gui()")
+else
+    logMsg("Random Engine Failure: ImGui not available in this FlyWithLua build — GUI disabled.")
+end
