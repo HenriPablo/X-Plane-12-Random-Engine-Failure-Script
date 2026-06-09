@@ -35,6 +35,8 @@ dataref("NUM_ENGINES", "sim/aircraft/engine/acf_num_engines", "readonly")
 THROTTLE_RATIO = dataref_table("sim/flightmodel/engine/ENGN_thro")
 -- Writable throttle command when override is enabled
 THROTTLE_RATIO_USE = dataref_table("sim/flightmodel/engine/ENGN_thro_use")
+-- Pilot command (what your hardware/commands are asking for) per engine
+COCKPIT_THROTTLE = dataref_table("sim/cockpit2/engine/actuators/throttle_ratio")
 -- Override throttle control (1 = override active)
 dataref("THROTTLE_OVERRIDE", "sim/operation/override/override_throttles", "writable")
 
@@ -107,17 +109,26 @@ function process_failure()
 
     -- If failure is active, enforce the throttle limit
     if failure_triggered then
-        -- We must keep setting THROTTLE_OVERRIDE = 1 to ensure it stays overridden
+        -- Keep override active and drive ALL engines every frame
         THROTTLE_OVERRIDE = 1
-        
+
         local max_allowed = 1.0 - reduction_amount
-        if THROTTLE_RATIO[target_engine] > max_allowed then
-            local prev_actual = THROTTLE_RATIO[target_engine] or -1
-            THROTTLE_RATIO_USE[target_engine] = max_allowed
-            if not clamp_logged then
-                logMsg(string.format("Random Engine Failure: [%s] Clamp applied on engine %d | prev_actual=%.2f -> cmd=%.2f | max_allowed=%.2f | snapshot=%s",
-                    now_ts(), target_engine + 1, prev_actual, max_allowed, max_allowed, throttle_snapshot()))
-                clamp_logged = true
+        local n = math.max(0, (NUM_ENGINES or 0))
+        for i = 0, n - 1 do
+            local pilot_cmd = COCKPIT_THROTTLE[i] or 0.0
+            if i == target_engine then
+                -- Failed engine: clamp to cap but allow pilot to pull back further
+                local desired = math.min(pilot_cmd, max_allowed)
+                if not clamp_logged and (THROTTLE_RATIO[i] or 0) > desired then
+                    logMsg(string.format(
+                        "Random Engine Failure: [%s] Clamp applied on engine %d | prev_actual=%.2f -> cmd=%.2f | max_allowed=%.2f | snapshot=%s",
+                        now_ts(), i + 1, THROTTLE_RATIO[i] or -1, desired, max_allowed, throttle_snapshot()))
+                    clamp_logged = true
+                end
+                THROTTLE_RATIO_USE[i] = desired
+            else
+                -- Good engine(s): forward pilot input so hardware keeps working
+                THROTTLE_RATIO_USE[i] = pilot_cmd
             end
         end
     end
