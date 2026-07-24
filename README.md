@@ -1,6 +1,6 @@
 # X‑Plane 12 — Random Engine Failure (FlyWithLua)
 
-A FlyWithLua script for X‑Plane 12 that randomly schedules and triggers a throttle reduction on one engine of multi‑engine aircraft. Includes an ImGui settings window and structured logging.
+A FlyWithLua script for X‑Plane 12 that randomly schedules and triggers a throttle reduction on one engine of single- or multi-engine aircraft. Includes an ImGui settings window and structured logging.
 
 ## Files
 - `src/main.lua` — The Lua script (install this into FlyWithLua Scripts as `random_engine_out.lua`).
@@ -42,7 +42,7 @@ C:\X-Plane 12\Resources\plugins\FlyWithLua\Scripts\random_engine_out.lua
 ```
 
 ## Using the script in X‑Plane
-1. Start X‑Plane and load a multi‑engine aircraft.
+1. Start X‑Plane and load an aircraft with at least one engine.
 2. From the FlyWithLua menu, open “Random Engine Failure Settings”.
 3. Click "Schedule New Random Failure".
 4. Watch `Log.txt` for lines prefixed with `Random Engine Failure:` to see initialization, schedule, trigger, and one‑time clamp messages.
@@ -54,7 +54,7 @@ Random Engine Failure script loaded successfully!
 
 ## Troubleshooting
 - Script quarantined: Ensure we bind `THROTTLE_RATIO` as a table. This repo already uses `THROTTLE_RATIO = dataref_table("sim/flightmodel/engine/ENGN_thro")`.
-- Single‑engine aircraft: the script will disable itself and log a message.
+- No-engine aircraft: the script will disable itself and log a message.
 - FlyWithLua not installed: `deploy.ps1` will still create the `Scripts` folder, but you must install the plugin for the script to run.
 - Reload after updating: Use FlyWithLua → "Reload all Lua scripts" or restart X‑Plane.
 

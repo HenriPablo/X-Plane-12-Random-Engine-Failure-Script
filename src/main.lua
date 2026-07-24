@@ -60,8 +60,8 @@ local function now_ts()
 end
 
 function setup_random_failure()
-    if (NUM_ENGINES or 0) < 2 then
-        logMsg("Random Engine Failure: Single engine aircraft detected. Script inactive.")
+    if (NUM_ENGINES or 0) < 1 then
+        logMsg("Random Engine Failure: No engines detected. Script inactive.")
         script_enabled = false
         return
     end
@@ -161,7 +161,7 @@ function engine_failure_gui()
             imgui.TextUnformatted(string.format("Next Failure in: %d seconds", remaining))
             imgui.TextUnformatted("Target Engine: (Hidden until failure)")
         else
-            imgui.TextUnformatted("Script Disabled (Single Engine?)")
+            imgui.TextUnformatted("Script Disabled (No engine detected)")
         end
     end
 
