@@ -18,9 +18,11 @@ deploy.bat
 ./deploy.sh
 ```
 
-That copies `src/main.lua` to `<X-Plane>/Resources/plugins/FlyWithLua/Scripts/random_engine_out.lua`
-and backs up any previous copy. If X-Plane isn't at `C:\X-Plane 12` (Windows) or
-`~/X-Plane 12` (Linux/macOS):
+That copies `src/main.lua` to `<X-Plane>/Resources/plugins/FlyWithLua/Scripts/random_engine_out.lua`,
+copies `src/modules/reo_*.lua` into `FlyWithLua/Modules/`, and backs up any
+previous copies. Both halves are required — the script logs
+`FATAL — could not load module` and stays inert without the modules. If X-Plane
+isn't at `C:\X-Plane 12` (Windows) or `~/X-Plane 12` (Linux/macOS):
 
 ```cmd
 deploy.bat -XPlanePath "D:\Games\X-Plane 12"

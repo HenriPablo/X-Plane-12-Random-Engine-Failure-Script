@@ -10,7 +10,8 @@ Failure timing is driven by a **shuffled scenario deck** that remembers what it 
 
 ## Files
 - `QUICKSTART.md` — Short how-to: deploy, launch, the options that matter.
-- `src/main.lua` — The Lua script (install this into FlyWithLua Scripts as `random_engine_out.lua`).
+- `src/main.lua` — The loader (install this into FlyWithLua Scripts as `random_engine_out.lua`).
+- `src/modules/reo_*.lua` — The deck, emergency catalog, GUI and helpers (install into FlyWithLua `Modules/`). **The script will not run without them** — use the deploy scripts, which copy both.
 - `src/random_engine_out.cfg.example` — Sample per-flight config file (see “Configuring per flight”).
 - `tools/practice-launch.bat` / `tools/practice-launch.sh` — One-command launcher that writes the config, then starts X‑Plane (Windows / Linux‑macOS).
 - `deploy.ps1` — PowerShell deployment helper for Windows.
@@ -60,6 +61,14 @@ Copy `src/main.lua` to:
 ```
 C:\X-Plane 12\Resources\plugins\FlyWithLua\Scripts\random_engine_out.lua
 ```
+
+…and every `src/modules/reo_*.lua` to:
+
+```
+C:\X-Plane 12\Resources\plugins\FlyWithLua\Modules\
+```
+
+FlyWithLua puts its `Modules` folder on `package.path` (see `Internals/FlyWithLua.ini`), which is how `require("reo_deck")` resolves. Miss this step and `Log.txt` says `FATAL — could not load module`.
 
 ## Using the script in X‑Plane
 1. Start X‑Plane and load an aircraft with at least one engine.
