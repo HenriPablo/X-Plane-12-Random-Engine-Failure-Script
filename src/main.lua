@@ -18,6 +18,7 @@ local DEFAULT_ENABLED = true            -- Master switch: run the failure logic 
 local DEFAULT_SESSION_MINUTES = 25      -- Nominal flying-time length of a practice session
 local DEFAULT_CLEAN_FLIGHT_CHANCE = 0.35 -- Fraction of flights that get no failure at all
 local DEFAULT_START_DELAY_MINUTES = 0   -- Guaranteed quiet minutes of flight before any failure
+local DEFAULT_FAILURE_DEADLINE_MINUTES = 0 -- Backstop: fire by this point of flight (0 = no backstop)
 local DEFAULT_REQUIRE_AIRBORNE = true   -- Only count time once the wheels leave the ground
 local DEFAULT_MIN_REDUCTION = 0.3       -- Floor for the power reduction (fraction of throttle lost)
 local DEFAULT_MAX_REDUCTION = 1.0       -- Ceiling for the power reduction (1.0 = driven to idle)
@@ -29,15 +30,20 @@ local cfg = {
     session_minutes = DEFAULT_SESSION_MINUTES,
     clean_flight_chance = DEFAULT_CLEAN_FLIGHT_CHANCE,
     start_delay_minutes = DEFAULT_START_DELAY_MINUTES,
+    failure_deadline_minutes = DEFAULT_FAILURE_DEADLINE_MINUTES,
     require_airborne = DEFAULT_REQUIRE_AIRBORNE,
     min_reduction = DEFAULT_MIN_REDUCTION,
     max_reduction = DEFAULT_MAX_REDUCTION,
     debug_reveal = DEFAULT_DEBUG_REVEAL,
 }
 
--- GUI State
-local show_settings_window = true
-local show_status_window = true
+-- GUI State. FlyWithLua NG+ builds ImGui windows via float_wnd_create rather
+-- than a do_on_imgui callback (which does not exist in any FlyWithLua build),
+-- so we hold a window handle and let the builder draw into it.
+local settings_wnd = nil
+local want_close_window = false -- Destroying a window inside its own builder is
+                                -- unsafe, so the close button sets this flag and
+                                -- a later callback does the destroying.
 
 -- Internal state
 local failure_triggered = false
@@ -67,6 +73,17 @@ local last_bucket = "none"    -- Previous flight's timing bucket (anti-repeat)
 local last_severity = "none"
 local flights_flown = 0
 
+-- A card that was armed but never fired (the flight ended first, or a "late"
+-- card was scheduled past the end of your actual airborne time). It is held
+-- here and re-armed on the next flight instead of being silently spent —
+-- otherwise the deck's stated rates are a lie and long sessions drift clean.
+local pending_bucket = "none"
+local pending_severity = "none"
+
+-- Per-flight reset. sim/time/total_flight_time_sec restarts at zero whenever a
+-- new flight is loaded, so a decrease is our "new flight" signal.
+local last_flight_time = 0
+
 -- Seed the RNG so the failure pattern differs between sessions. The first few
 -- draws after seeding correlate with the seed on some Lua builds, so burn them.
 math.randomseed(os.time())
@@ -83,6 +100,9 @@ dataref("SIM_TIME", "sim/time/total_running_time_sec", "readonly")
 dataref("SIM_PAUSED", "sim/time/paused", "readonly")
 -- Ground contact (1 = any gear on the ground). Anchors the clock at liftoff.
 dataref("ON_GROUND", "sim/flightmodel/failures/onground_any", "readonly")
+-- Elapsed time of the current flight. Resets to zero on every new flight, which
+-- is how we notice a reposition/reload and re-arm for the next one.
+dataref("FLIGHT_TIME", "sim/time/total_flight_time_sec", "readonly")
 -- Array of throttle settings (0.0 to 1.0) — actual engine throttle ratio (read-only)
 THROTTLE_RATIO = dataref_table("sim/flightmodel/engine/ENGN_thro")
 -- Writable throttle command when override is enabled
@@ -169,6 +189,8 @@ local function load_config()
                     cfg.clean_flight_chance = tonumber(v) or cfg.clean_flight_chance
                 elseif k == "start_delay_minutes" then
                     cfg.start_delay_minutes = tonumber(v) or cfg.start_delay_minutes
+                elseif k == "failure_deadline_minutes" then
+                    cfg.failure_deadline_minutes = tonumber(v) or cfg.failure_deadline_minutes
                 elseif k == "require_airborne" then
                     cfg.require_airborne = parse_bool(v)
                 elseif k == "min_reduction" then
@@ -191,13 +213,14 @@ local function load_config()
     cfg.session_minutes = math.max(1, cfg.session_minutes)
     cfg.clean_flight_chance = clamp(cfg.clean_flight_chance, 0.0, 0.8)
     cfg.start_delay_minutes = math.max(0, cfg.start_delay_minutes)
+    cfg.failure_deadline_minutes = math.max(0, cfg.failure_deadline_minutes)
     cfg.min_reduction = clamp(cfg.min_reduction, 0.0, 1.0)
     cfg.max_reduction = clamp(cfg.max_reduction, cfg.min_reduction, 1.0)
 
     logMsg(string.format(
-        "Random Engine Failure: config loaded from %s | enabled=%s, session=%.0fmin, clean_chance=%.0f%%, start_delay=%.1fmin, require_airborne=%s, reduction=%.0f-%.0f%%",
+        "Random Engine Failure: config loaded from %s | enabled=%s, session=%.0fmin, clean_chance=%.0f%%, start_delay=%.1fmin, deadline=%.1fmin, require_airborne=%s, reduction=%.0f-%.0f%%",
         path, tostring(cfg.enabled), cfg.session_minutes, cfg.clean_flight_chance * 100,
-        cfg.start_delay_minutes, tostring(cfg.require_airborne),
+        cfg.start_delay_minutes, cfg.failure_deadline_minutes, tostring(cfg.require_airborne),
         cfg.min_reduction * 100, cfg.max_reduction * 100))
 end
 
@@ -248,6 +271,10 @@ local function load_state()
                     if is_valid_bucket(v) then last_bucket = v end
                 elseif k == "last_severity" then
                     if is_valid_severity(v) then last_severity = v end
+                elseif k == "pending_bucket" then
+                    if BUCKET_WINDOWS[v] ~= nil then pending_bucket = v end
+                elseif k == "pending_severity" then
+                    if is_valid_severity(v) then pending_severity = v end
                 elseif k == "flights" then
                     flights_flown = tonumber(v) or 0
                 end
@@ -257,8 +284,9 @@ local function load_state()
     f:close()
 
     logMsg(string.format(
-        "Random Engine Failure: deck state loaded | flights=%d, timing_cards_left=%d, severity_cards_left=%d, last=%s/%s",
-        flights_flown, #deck, #severity_deck, last_bucket, last_severity))
+        "Random Engine Failure: deck state loaded | flights=%d, timing_cards_left=%d, severity_cards_left=%d, last=%s/%s, pending=%s/%s",
+        flights_flown, #deck, #severity_deck, last_bucket, last_severity,
+        pending_bucket, pending_severity))
 end
 
 local function save_state()
@@ -274,6 +302,9 @@ local function save_state()
     f:write("severity_deck = " .. table.concat(severity_deck, ",") .. "\n")
     f:write("last_bucket = " .. last_bucket .. "\n")
     f:write("last_severity = " .. last_severity .. "\n")
+    f:write("# A card armed but not yet fired. Re-armed next flight, not spent.\n")
+    f:write("pending_bucket = " .. pending_bucket .. "\n")
+    f:write("pending_severity = " .. pending_severity .. "\n")
     f:write("flights = " .. tostring(flights_flown) .. "\n")
     f:close()
 end
@@ -377,6 +408,22 @@ local function draw_severity_card()
     return table.remove(severity_deck)
 end
 
+-- Puts a held-over card back into the decks so an explicit manual reroll does
+-- not quietly destroy it. Inserted at the front (decks are consumed from the
+-- end) so it resurfaces later in the rotation rather than immediately.
+local function return_pending_to_deck()
+    if pending_bucket == "none" then return end
+    table.insert(deck, 1, pending_bucket)
+    if pending_severity ~= "none" then
+        table.insert(severity_deck, 1, pending_severity)
+    end
+    logMsg(string.format(
+        "Random Engine Failure: held-over card %s/%s returned to the deck.",
+        pending_bucket, pending_severity))
+    pending_bucket = "none"
+    pending_severity = "none"
+end
+
 -- =============================================================================
 -- CORE LOGIC
 -- =============================================================================
@@ -421,13 +468,26 @@ function setup_random_failure()
     logMsg(string.format("Random Engine Failure: [%s] Initialized. Engines: %d, Throttles: %s",
         now_ts(), NUM_ENGINES or -1, throttle_snapshot()))
 
-    -- Stage 3: the card decides everything about this flight.
-    card_bucket = draw_timing_card()
+    -- Stage 3: the card decides everything about this flight. A card that was
+    -- armed but never fired is re-armed first; only if there is none do we deal
+    -- a new one. The card's identity (bucket + severity) carries over, but the
+    -- exact second and the target engine are re-rolled — so a missed card comes
+    -- back without becoming something you can memorise.
+    local resumed = false
+    if pending_bucket ~= "none" and pending_severity ~= "none" then
+        card_bucket = pending_bucket
+        card_severity = pending_severity
+        resumed = true
+    else
+        card_bucket = draw_timing_card()
+    end
     flights_flown = flights_flown + 1
 
     if card_bucket == "clean" then
         clean_flight = true
         last_bucket = card_bucket
+        pending_bucket = "none"
+        pending_severity = "none"
         save_state()
         logMsg(string.format(
             "Random Engine Failure: [%s] Card drawn: CLEAN — no failure this flight (flight #%d, %d timing cards left).",
@@ -439,7 +499,9 @@ function setup_random_failure()
     target_engine = math.random(0, NUM_ENGINES - 1)
 
     -- Severity comes from its own deck so the light/heavy/total mix stays even.
-    card_severity = draw_severity_card()
+    if not resumed then
+        card_severity = draw_severity_card()
+    end
     local band = SEVERITY_BANDS[card_severity]
     local band_lo = clamp(band[1], cfg.min_reduction, cfg.max_reduction)
     local band_hi = clamp(band[2], cfg.min_reduction, cfg.max_reduction)
@@ -451,16 +513,30 @@ function setup_random_failure()
     local session_seconds = cfg.session_minutes * 60
     local fraction = window[1] + (math.random() * (window[2] - window[1]))
     target_elapsed = math.max(fraction * session_seconds, cfg.start_delay_minutes * 60)
+
+    -- Backstop: a "late" card scheduled past the end of your real airborne time
+    -- would never fire. Pull it back to the deadline — but never inside the
+    -- guaranteed-quiet period, which wins if the two conflict.
+    if cfg.failure_deadline_minutes > 0 then
+        local deadline = math.max(cfg.failure_deadline_minutes * 60, cfg.start_delay_minutes * 60)
+        if target_elapsed > deadline then
+            target_elapsed = deadline
+        end
+    end
     armed = true
 
+    -- Hold the card until it actually fires (see process_failure).
+    pending_bucket = card_bucket
+    pending_severity = card_severity
     last_bucket = card_bucket
     last_severity = card_severity
     save_state()
 
     local max_allowed = 1.0 - reduction_amount
     logMsg(string.format(
-        "Random Engine Failure: [%s] Card drawn: %s/%s | engine=%d, fires at %.1f min of %s time, reduction=%.1f%%, max_allowed=%.2f | flight #%d, %d timing / %d severity cards left | snapshot=%s",
-        now_ts(), string.upper(card_bucket), string.upper(card_severity), target_engine + 1,
+        "Random Engine Failure: [%s] Card %s: %s/%s | engine=%d, fires at %.1f min of %s time, reduction=%.1f%%, max_allowed=%.2f | flight #%d, %d timing / %d severity cards left | snapshot=%s",
+        now_ts(), resumed and "RE-ARMED (held over)" or "drawn",
+        string.upper(card_bucket), string.upper(card_severity), target_engine + 1,
         target_elapsed / 60, cfg.require_airborne and "AIRBORNE" or "armed",
         reduction_amount * 100, max_allowed, flights_flown, #deck, #severity_deck,
         throttle_snapshot()))
@@ -489,6 +565,25 @@ function update_flight_clock()
     local delta = now - last_tick
     last_tick = now
 
+    -- A new flight (reposition, restart, or loading a saved situation) sends the
+    -- sim's flight timer backwards. Re-arm, so flight two gets its own card
+    -- rather than inheriting a clock that already ran past the target — and so a
+    -- card that did not fire on flight one is held over rather than lost.
+    local ft = FLIGHT_TIME or 0
+    if ft < last_flight_time - 2 then
+        last_flight_time = ft
+        if script_enabled then
+            logMsg(string.format(
+                "Random Engine Failure: [%s] New flight detected — re-arming for the next one.",
+                now_ts()))
+            failure_triggered = false
+            THROTTLE_OVERRIDE = 0
+            initialized = false -- try_initialize re-arms on its next tick
+        end
+        return
+    end
+    last_flight_time = ft
+
     if not script_enabled or not initialized then return end
     if (SIM_PAUSED or 0) ~= 0 then return end
 
@@ -510,6 +605,11 @@ function update_flight_clock()
 end
 
 function process_failure()
+    -- Deferred window teardown (see the Hide Window button). Cheap flag check,
+    -- and it must run even when the script is disabled. close_settings_window is
+    -- a global defined further down; globals resolve at call time, not here.
+    if want_close_window then close_settings_window() end
+
     if not script_enabled then return end
 
     -- Only run if armed, not already triggered, and the clock has caught up.
@@ -517,6 +617,10 @@ function process_failure()
         if flight_elapsed >= target_elapsed then
             failure_triggered = true
             THROTTLE_OVERRIDE = 1 -- Activate override
+            -- The card has now been played, so it is no longer held over.
+            pending_bucket = "none"
+            pending_severity = "none"
+            save_state()
             local max_allowed = 1.0 - reduction_amount
             local curr = THROTTLE_RATIO[target_engine] or -1
             logMsg(string.format("Random Engine Failure: [%s] FAILURE TRIGGERED on engine %d after %.1f min of flight | card=%s/%s | reduction=%.1f%% | max_allowed=%.2f | curr_throttle=%.2f | snapshot=%s | override=1",
@@ -572,11 +676,10 @@ end
 -- GUI (ImGui)
 -- =============================================================================
 
-function engine_failure_gui()
-    if not show_settings_window then return end
-
-    imgui.Begin("Random Engine Failure Settings")
-
+-- FlyWithLua NG+ owns the window frame and calls the builder with (wnd, x, y),
+-- so this function draws contents only — no imgui.Begin/End. The name is passed
+-- to float_wnd_set_imgui_builder as a string, so it must stay global.
+function engine_failure_gui(wnd, x, y)
     -- Master enable/disable — the in-sim way to fly a normal (no-failure) session.
     if script_enabled then
         if imgui.Button("Disable (Normal Flight)") then
@@ -589,6 +692,9 @@ function engine_failure_gui()
     end
 
     if imgui.Button("Draw New Scenario Card") then
+        -- Honour the label: a manual reroll really does deal a different card,
+        -- with any held-over one put back in the deck rather than binned.
+        return_pending_to_deck()
         enable_script()
         setup_random_failure()
         initialized = true
@@ -623,6 +729,10 @@ function engine_failure_gui()
     imgui.TextUnformatted(string.format("Session: %.0f min | Clean flights: %.0f%%",
         cfg.session_minutes, cfg.clean_flight_chance * 100))
     imgui.TextUnformatted(string.format("Quiet time after liftoff: %.1f min", cfg.start_delay_minutes))
+    if cfg.failure_deadline_minutes > 0 then
+        imgui.TextUnformatted(string.format("Fires by: %.1f min of flight at the latest",
+            cfg.failure_deadline_minutes))
+    end
     imgui.TextUnformatted(string.format("Reduction: %.0f%% - %.0f%%", cfg.min_reduction * 100, cfg.max_reduction * 100))
     imgui.TextUnformatted(string.format("Flights flown: %d", flights_flown))
 
@@ -638,17 +748,49 @@ function engine_failure_gui()
             imgui.TextUnformatted("Clean flight — nothing armed.")
         end
         imgui.TextUnformatted(string.format("Cards left: %d timing, %d severity", #deck, #severity_deck))
+        imgui.TextUnformatted(string.format("Held over: %s / %s", pending_bucket, pending_severity))
     end
 
     if imgui.Button("Hide Window") then
-        show_settings_window = false
+        -- Destroying a window from inside its own builder is unsafe; let the
+        -- per-frame housekeeping in process_failure() do it a moment later.
+        want_close_window = true
     end
-
-    imgui.End()
 end
 
--- Add a menu item to show the window again if closed
-add_macro("Random Engine Failure Settings", "show_settings_window = true", "show_settings_window = false", "activate")
+-- Creates the floating ImGui window. Previous versions probed for do_on_imgui,
+-- which does not exist in any FlyWithLua build — so the GUI never appeared and
+-- there was no in-sim sign of whether the script was armed. NG+ 2.8+ builds
+-- ImGui windows through float_wnd_create instead.
+function open_settings_window()
+    if settings_wnd ~= nil then return end
+    if type(float_wnd_create) ~= "function" or imgui == nil then
+        logMsg("Random Engine Failure: this FlyWithLua build has no ImGui window API — GUI unavailable.")
+        return
+    end
+    settings_wnd = float_wnd_create(340, 320, 1, true)
+    float_wnd_set_title(settings_wnd, "Random Engine Failure Settings")
+    float_wnd_set_imgui_builder(settings_wnd, "engine_failure_gui")
+    float_wnd_set_onclose(settings_wnd, "on_settings_window_closed")
+end
+
+function close_settings_window()
+    want_close_window = false
+    if settings_wnd ~= nil then
+        float_wnd_destroy(settings_wnd)
+        settings_wnd = nil
+    end
+end
+
+-- FlyWithLua calls this when the user clicks the window's X. The window is
+-- already gone by then, so just drop our handle — destroying it again crashes.
+function on_settings_window_closed(wnd)
+    settings_wnd = nil
+    want_close_window = false
+end
+
+-- Menu entry to bring the window back after hiding it.
+add_macro("Random Engine Failure Settings", "open_settings_window()", "close_settings_window()", "activate")
 
 -- =============================================================================
 -- FLYWITHLUA HOOKS
@@ -679,9 +821,7 @@ function draw_failure_status()
 end
 
 do_every_draw("draw_failure_status()")
--- Register ImGui callback only if available (some FlyWithLua builds lack ImGui)
-if type(do_on_imgui) == "function" and imgui ~= nil then
-    do_on_imgui("engine_failure_gui()")
-else
-    logMsg("Random Engine Failure: ImGui not available in this FlyWithLua build — GUI disabled.")
-end
+
+-- Open the settings window on load, so there is always a visible indication of
+-- whether the script is armed. Hide it from the FlyWithLua macro menu.
+open_settings_window()

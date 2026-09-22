@@ -63,7 +63,7 @@ C:\X-Plane 12\Resources\plugins\FlyWithLua\Scripts\random_engine_out.lua
 
 ## Using the script in X‑Plane
 1. Start X‑Plane and load an aircraft with at least one engine.
-2. From the FlyWithLua menu, open “Random Engine Failure Settings”.
+2. The “Random Engine Failure Settings” window opens automatically; reopen it from the FlyWithLua **Macros** menu if you hide it.
 3. It draws a scenario card automatically once engines are detected. Use **Disable (Normal Flight)** to fly without a failure, **Enable (Arm Failure)** to re‑arm, or **Draw New Scenario Card** to reroll immediately.
 4. Take off. The clock only starts at liftoff and only runs while the sim is unpaused, so taxi time and coffee breaks never burn the window.
 5. Watch `Log.txt` for lines prefixed with `Random Engine Failure:` to see the card drawn, the liftoff timestamp, the trigger, and the one‑time clamp message.
@@ -81,6 +81,14 @@ Rather than rolling fresh dice every flight, the script deals from a deck and wr
 Both decks are arranged so consecutive flights never repeat the same bucket. Clean cards are exempt — forbidding *those* from repeating would make clean and failure flights alternate, which is its own kind of predictable.
 
 Percentages over a full deck are exact, not merely average. With the defaults you get exactly 1 clean flight in 3, and never two `early` failures back to back.
+
+### Held-over cards
+
+That exactness depends on one more rule: **a card that was armed but never fired is not spent.** If the flight ends first — or a `late` card was scheduled past the end of your real airborne time — the card is stored as `pending_bucket` / `pending_severity` and re-armed on the next flight. Its bucket and severity carry over; the exact second and the target engine are re-rolled, so a card coming back is not a card you can predict.
+
+Without this, long `session_minutes` values quietly bias you toward quiet flights: every unreachable `late` card would vanish from the deck having done nothing. Use `failure_deadline_minutes` to stop them being scheduled out of reach in the first place.
+
+A new flight is detected via `sim/time/total_flight_time_sec` going backwards, so repositioning or restarting re-arms cleanly rather than inheriting a clock that already ran past the target.
 
 ### Deck memory
 
@@ -119,6 +127,7 @@ Keys (all optional; missing ones use defaults):
 | `session_minutes` | Nominal session length in **flying** minutes; timing scales to it | `25` |
 | `clean_flight_chance` | Share of flights that draw a `clean` card and get no failure (0.0–0.8) | `0.35` |
 | `start_delay_minutes` | Guaranteed quiet minutes **after liftoff**; floors the drawn time | `0` |
+| `failure_deadline_minutes` | Latest point of flight a failure may fire; caps the drawn time so late cards can't overshoot your real airborne time (`0` = no backstop) | `0` |
 | `require_airborne` | Start the clock at liftoff rather than at arming (`false` for ground testing) | `true` |
 | `min_reduction` / `max_reduction` | Range the light/heavy/total severity bands are clamped into | `0.3` / `1.0` |
 | `debug_reveal` | Show the drawn card, countdown and remaining deck in the GUI | `false` |

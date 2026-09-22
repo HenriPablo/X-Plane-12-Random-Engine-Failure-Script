@@ -102,6 +102,7 @@ which documents every key inline.
 | `enabled` | `false` = normal flight, nothing will happen | `true` |
 | `session_minutes` | Session length in **flying** minutes; failure timing scales to it | `25` |
 | `start_delay_minutes` | Guaranteed quiet minutes after liftoff | `0` |
+| `failure_deadline_minutes` | Fire by this minute of flight at the latest (`0` = no backstop) | `0` |
 | `clean_flight_chance` | Share of flights with no failure at all (0.0–0.8) | `0.35` |
 | `min_reduction` / `max_reduction` | How much power a failure can take (`1.0` = driven to idle) | `0.3` / `1.0` |
 | `require_airborne` | `false` starts the clock on the ground — for testing only | `true` |
@@ -123,7 +124,15 @@ Then delete `random_engine_out.state` so the deck rebuilds with the new mix.
 Also make sure `session_minutes` matches your **airborne** time, not your
 wall-clock block. A 25-minute practice block in a C172 is maybe 15–18 minutes
 wheels-up once you've started, taxied and run up — and a late-session card
-scheduled for minute 22 of a 25-minute session simply never fires.
+scheduled for minute 22 of a 25-minute session has nowhere to fire.
+
+Two things now protect you from that. A card that doesn't fire is **held over**
+and re-armed on your next flight rather than spent, so it can't go missing. And
+`failure_deadline_minutes` pulls late cards back to a time you'll actually reach:
+
+```
+failure_deadline_minutes = 18
+```
 
 ---
 
@@ -167,13 +176,18 @@ instead see:
 - nothing at all → FlyWithLua isn't loading the script. Check it appears in
   X-Plane's Plugins menu and that the file isn't in `Scripts (Quarantine)`.
 
-## Known issues
+## The in-sim window
 
-- **The in-sim settings window does not open.** The script probes for a
-  FlyWithLua API (`do_on_imgui`) that doesn't exist in FlyWithLua NG+, so it logs
-  `ImGui not available in this FlyWithLua build — GUI disabled` on every build and
-  skips the GUI. Until that's fixed, the config file and launcher are the only
-  controls, and there is no in-sim indicator of whether the script is armed.
-- **A failure scheduled past the end of your flight is lost, not postponed** — and
-  the card is still spent. This biases you toward quiet flights when
-  `session_minutes` is longer than your real airborne time.
+A window titled **Random Engine Failure Settings** opens on load and shows
+whether the script is armed — check it if you're unsure. If you close it, reopen
+it from the FlyWithLua **Macros** menu. It gives you:
+
+- **Disable (Normal Flight)** / **Enable (Arm Failure)** — fly a quiet session
+  without touching the config.
+- **Draw New Scenario Card** — reroll now. Any held-over card goes back into the
+  deck rather than being binned.
+- **Clear Failure / Reset** — release the throttle override after a failure and
+  arm the next one.
+
+Status is deliberately vague ("Flying for 12.4 min. Anything could happen.")
+unless you set `debug_reveal = true`.
