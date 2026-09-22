@@ -1,0 +1,179 @@
+# Quick Start
+
+The short version. For how the deck works and why, see [README.md](README.md).
+
+---
+
+## 1. Install it
+
+From the project root:
+
+```cmd
+:: Windows
+deploy.bat
+```
+
+```bash
+# Linux / macOS
+./deploy.sh
+```
+
+That copies `src/main.lua` to `<X-Plane>/Resources/plugins/FlyWithLua/Scripts/random_engine_out.lua`
+and backs up any previous copy. If X-Plane isn't at `C:\X-Plane 12` (Windows) or
+`~/X-Plane 12` (Linux/macOS):
+
+```cmd
+deploy.bat -XPlanePath "D:\Games\X-Plane 12"
+```
+
+**Re-run this after every edit to `src/main.lua`.** Editing the file in this repo
+changes nothing in the sim until you deploy.
+
+---
+
+## 2. Launch a session
+
+```cmd
+:: Windows — from the project root
+tools\practice-launch.bat armed
+```
+
+```bash
+# Linux / macOS
+./tools/practice-launch.sh armed
+```
+
+> ⚠️ **The word `armed` is not optional.** Without it the launcher writes
+> `enabled = false` and you will fly a perfectly normal, failure-free session.
+> That setting is **sticky** — it stays in the config file until something
+> rewrites it, so starting X-Plane directly (not via the launcher) reuses
+> whatever the last launch wrote. If you've flown several quiet flights in a row,
+> check this first.
+
+### Launcher arguments
+
+`practice-launch.bat [mode] [quiet-minutes] [session-minutes]`
+
+| Command | Effect |
+| --- | --- |
+| `practice-launch.bat` | Normal flight — failures **disabled** |
+| `practice-launch.bat armed` | Armed, 25-minute session, failure possible from liftoff |
+| `practice-launch.bat armed 10` | Armed, but guaranteed quiet for the first 10 min of flight |
+| `practice-launch.bat armed 0 50` | Armed, 50-minute session (timing spreads over twice the distance) |
+
+Set these first if you need them:
+
+```cmd
+set XPLANE_PATH=D:\Games\X-Plane 12
+set CLEAN_FLIGHT_CHANCE=0.2      :: fewer no-failure flights (default 0.35)
+set DEBUG_REVEAL=true            :: show the drawn card + countdown (spoilers)
+```
+
+---
+
+## 3. Fly
+
+1. Load an aircraft with at least one engine. The script arms itself
+   automatically once it detects them.
+2. Take off. **The clock starts at liftoff**, not at load — taxi, startup and
+   run-up cost you nothing. It also pauses when the sim pauses.
+3. At some point in the session, one engine loses power. Which engine, when, and
+   how badly are all drawn from the deck. Sometimes nothing happens at all —
+   that's by design (see `clean_flight_chance`).
+4. Recover: identify, verify, feather/secure as appropriate. The power loss is
+   enforced every frame, so you cannot throttle your way out of it.
+
+Verify what the script did in `<X-Plane>\Log.txt` — search for
+`Random Engine Failure:`. It logs the card drawn, its target time, liftoff, the
+trigger, and the deck remainder. **It is a full spoiler**, so read it after the
+flight, not before.
+
+---
+
+## 4. Options
+
+All of these live in `<X-Plane>\Resources\plugins\FlyWithLua\Scripts\random_engine_out.cfg`.
+The launcher rewrites the first three; edit the file by hand for the rest.
+Start from [`src/random_engine_out.cfg.example`](src/random_engine_out.cfg.example),
+which documents every key inline.
+
+| Key | What it does | Default |
+| --- | --- | --- |
+| `enabled` | `false` = normal flight, nothing will happen | `true` |
+| `session_minutes` | Session length in **flying** minutes; failure timing scales to it | `25` |
+| `start_delay_minutes` | Guaranteed quiet minutes after liftoff | `0` |
+| `clean_flight_chance` | Share of flights with no failure at all (0.0–0.8) | `0.35` |
+| `min_reduction` / `max_reduction` | How much power a failure can take (`1.0` = driven to idle) | `0.3` / `1.0` |
+| `require_airborne` | `false` starts the clock on the ground — for testing only | `true` |
+| `debug_reveal` | Show the card and countdown in-sim. Ruins the surprise | `false` |
+
+Anything missing from the file falls back to the default. Changes take effect on
+FlyWithLua → **Reload all Lua scripts**, or on the next X-Plane start.
+
+### Want failures more often?
+
+Lower `clean_flight_chance` — `0.0` means every flight gets one:
+
+```
+clean_flight_chance = 0.0
+```
+
+Then delete `random_engine_out.state` so the deck rebuilds with the new mix.
+
+Also make sure `session_minutes` matches your **airborne** time, not your
+wall-clock block. A 25-minute practice block in a C172 is maybe 15–18 minutes
+wheels-up once you've started, taxied and run up — and a late-session card
+scheduled for minute 22 of a 25-minute session simply never fires.
+
+---
+
+## 5. Reset the deck
+
+The script remembers what it dealt you, in:
+
+```
+<X-Plane>\Resources\plugins\FlyWithLua\Scripts\random_engine_out.state
+```
+
+Delete that file to reshuffle from scratch. Worth doing after changing
+`clean_flight_chance` or when starting a fresh training block.
+
+---
+
+## 6. Nothing is happening — checklist
+
+Run through these in order:
+
+```cmd
+:: 1. Is it actually enabled? Look for "enabled = false".
+type "C:\X-Plane 12\Resources\plugins\FlyWithLua\Scripts\random_engine_out.cfg"
+
+:: 2. Is the deployed script current? Compare against src\main.lua.
+dir "C:\X-Plane 12\Resources\plugins\FlyWithLua\Scripts\random_engine_out.lua"
+
+:: 3. What did it decide? (spoilers)
+findstr /C:"Random Engine Failure" "C:\X-Plane 12\Log.txt"
+```
+
+In the log you want to see a line reading `Card drawn: EARLY/HEAVY | ...`. If you
+instead see:
+
+- `disabled by config (enabled=false)` → you launched without `armed` (step 2 above).
+- `config loaded ... wait=0.5-2.0min` → the deployed script is an **old version**.
+  Re-run `deploy.bat`.
+- `no config file at ...` → the launcher never wrote one; check `XPLANE_PATH`.
+- `Card drawn: CLEAN` → working as intended, this flight gets nothing. Lower
+  `clean_flight_chance` if that's happening too often.
+- nothing at all → FlyWithLua isn't loading the script. Check it appears in
+  X-Plane's Plugins menu and that the file isn't in `Scripts (Quarantine)`.
+
+## Known issues
+
+- **The in-sim settings window does not open.** The script probes for a
+  FlyWithLua API (`do_on_imgui`) that doesn't exist in FlyWithLua NG+, so it logs
+  `ImGui not available in this FlyWithLua build — GUI disabled` on every build and
+  skips the GUI. Until that's fixed, the config file and launcher are the only
+  controls, and there is no in-sim indicator of whether the script is armed.
+- **A failure scheduled past the end of your flight is lost, not postponed** — and
+  the card is still spent. This biases you toward quiet flights when
+  `session_minutes` is longer than your real airborne time.
