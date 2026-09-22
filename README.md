@@ -99,6 +99,20 @@ Without this, long `session_minutes` values quietly bias you toward quiet flight
 
 A new flight is detected via `sim/time/total_flight_time_sec` going backwards, so repositioning or restarting re-arms cleanly rather than inheriting a clock that already ran past the target.
 
+## Training history
+
+Every card the script deals is recorded in `random_engine_out.history.csv`, next to the config — one row, appended when the card resolves:
+
+| `outcome` | When it is written |
+| --- | --- |
+| `clean` | At draw: a clean card, nothing was going to happen |
+| `fired` | At trigger, with `fired_at_min` |
+| `expired` | A new flight was detected while the card was still armed; `notes` records scheduled-versus-reached minutes |
+
+Column 1 is a schema version, and the grading columns (`reaction_s`, `correct_engine`, `ias_in_band_pct`, `max_bank`, `max_slip`, `alt_loss_ft`, `hdg_dev`, `ap_pct`) are written empty for now — so the header stays stable when grading starts filling them. `grade` reads `unscored`.
+
+Commas, quotes and newlines are substituted rather than quoted, so the file needs no CSV parser and opens cleanly in Excel. It rotates to `.old` past 5000 rows. Unlike `Log.txt` it contains no spoilers, and deleting `random_engine_out.state` does not touch it.
+
 ### Deck memory
 
 The remaining cards live in `random_engine_out.state`, next to the config:

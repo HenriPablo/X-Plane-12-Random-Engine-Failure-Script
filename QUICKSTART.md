@@ -138,7 +138,34 @@ failure_deadline_minutes = 18
 
 ---
 
-## 5. Reset the deck
+## 5. Your training record
+
+Every scenario the script deals gets one row in:
+
+```
+<X-Plane>\Resources\plugins\FlyWithLua\Scripts\random_engine_out.history.csv
+```
+
+Open it in Excel. One row per card, with the aircraft, what was dealt, and how
+it resolved:
+
+| `outcome` | Meaning |
+| --- | --- |
+| `fired` | The failure happened — `fired_at_min` is how far into the flight |
+| `clean` | A clean card; nothing was going to happen that flight |
+| `expired` | The flight ended with the card still armed. `notes` shows what it was scheduled for versus how far you actually got |
+
+A run of `expired` rows is the file telling you `session_minutes` or
+`failure_deadline_minutes` doesn't match how long you really stay airborne.
+
+The grading columns (`reaction_s`, `correct_engine`, `max_bank`, …) are present
+but empty — they're filled in a later phase. `grade` reads `unscored` for now.
+
+Unlike `Log.txt`, this file is safe to read before a flight: it's a record of
+what already happened, not a spoiler for what's coming. Deleting
+`random_engine_out.state` to reshuffle the deck does **not** touch it.
+
+## 6. Reset the deck
 
 The script remembers what it dealt you, in:
 
@@ -151,7 +178,7 @@ Delete that file to reshuffle from scratch. Worth doing after changing
 
 ---
 
-## 6. Nothing is happening — checklist
+## 7. Nothing is happening — checklist
 
 Run through these in order:
 
@@ -175,6 +202,8 @@ instead see:
 - `no config file at ...` → the launcher never wrote one; check `XPLANE_PATH`.
 - `Card drawn: CLEAN` → working as intended, this flight gets nothing. Lower
   `clean_flight_chance` if that's happening too often.
+- `FATAL — could not load module` → the `Modules/reo_*.lua` files are missing.
+  Re-run `deploy.bat`, which copies them.
 - nothing at all → FlyWithLua isn't loading the script. Check it appears in
   X-Plane's Plugins menu and that the file isn't in `Scripts (Quarantine)`.
 

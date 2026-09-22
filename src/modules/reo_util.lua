@@ -29,4 +29,18 @@ function M.now_ts()
     return os.date("%Y-%m-%d %H:%M:%S")
 end
 
+-- Makes a value safe to drop into a comma-separated file. Rather than quoting
+-- (which then needs escaping, which then needs a real parser), substitute the
+-- three characters that would break a column: commas, newlines and quotes.
+-- Aircraft names and free-text notes contain all three. The result stays
+-- readable in Excel and in a text editor.
+function M.csv_field(v)
+    if v == nil then return "" end
+    local s = tostring(v)
+    s = s:gsub("[\r\n]+", " ")
+    s = s:gsub('"', "'")
+    s = s:gsub(",", ";")
+    return s
+end
+
 return M

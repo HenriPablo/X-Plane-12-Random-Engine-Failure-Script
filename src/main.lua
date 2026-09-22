@@ -143,6 +143,7 @@ end
 local util = need("reo_util")
 local deck_mod = need("reo_deck")
 local scenarios = need("reo_scenarios")
+local history = need("reo_history")
 local gui = need("reo_gui")
 
 -- Helper: format an engines throttle snapshot like [1: 0.73, 2: 0.70]
@@ -163,6 +164,7 @@ local reo = {
     util = util,
     deck = deck_mod,
     scenarios = scenarios,
+    history = history,
     gui = gui,
     actions = {},
     throttle_snapshot = throttle_snapshot,
@@ -175,6 +177,7 @@ local reo = {
 if modules_ok then
     deck_mod.init(reo)
     scenarios.init(reo)
+    history.init(reo)
     gui.init(reo)
 end
 
@@ -294,11 +297,17 @@ function setup_random_failure()
     end
     state.flights_flown = state.flights_flown + 1
 
+    -- Open the training record for this card. It gets exactly one row, written
+    -- when the card resolves: clean here, fired in process_failure, or expired
+    -- if the flight ends with it still armed.
+    state.event = history.new_event({ bucket = state.card_bucket })
+
     if state.card_bucket == "clean" then
         state.clean_flight = true
         state.last_bucket = state.card_bucket
         state.pending_bucket = "none"
         state.pending_severity = "none"
+        history.record(state.event, "clean")
         deck_mod.save_state()
         logMsg(string.format(
             "Random Engine Failure: [%s] Card drawn: CLEAN — no failure this flight (flight #%d, %d timing cards left).",
@@ -314,11 +323,8 @@ function setup_random_failure()
     -- The scenario picks the specifics: which engine, and exactly how much power
     -- it loses within the severity band.
     local scenario = scenarios.get("engine_out")
-    state.event = {
-        scenario = scenario.id,
-        bucket = state.card_bucket,
-        severity = state.card_severity,
-    }
+    state.event.scenario = scenario.id
+    state.event.severity = state.card_severity
     scenario.arm(state.event)
 
     -- Timing: a random point inside the bucket's slice of the session, floored
@@ -391,6 +397,16 @@ function update_flight_clock()
             logMsg(string.format(
                 "Random Engine Failure: [%s] New flight detected — re-arming for the next one.",
                 util.now_ts()))
+            -- The flight ended with a card still armed. Record that it never got
+            -- the chance to fire: a run of these means the deadline is set wrong
+            -- for how long you actually stay airborne. The card itself is still
+            -- held over in the .state file, so nothing is lost from the deck.
+            if state.armed and not state.failure_triggered then
+                history.record(state.event, "expired", {
+                    notes = string.format("scheduled %.1f min; flight reached %.1f min",
+                        state.target_elapsed / 60, state.flight_elapsed / 60),
+                })
+            end
             state.failure_triggered = false
             THROTTLE_OVERRIDE = 0
             state.initialized = false -- try_initialize re-arms on its next tick
@@ -435,6 +451,9 @@ function process_failure()
             -- The card has now been played, so it is no longer held over.
             state.pending_bucket = "none"
             state.pending_severity = "none"
+            history.record(state.event, "fired", {
+                fired_at_min = string.format("%.1f", state.flight_elapsed / 60),
+            })
             deck_mod.save_state()
             local max_allowed = 1.0 - state.reduction_amount
             local curr = THROTTLE_RATIO[state.target_engine] or -1
