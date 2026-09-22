@@ -7,9 +7,14 @@ Failure timing is driven by a **shuffled scenario deck** that remembers what it 
 > **Just want to fly?** See **[QUICKSTART.md](QUICKSTART.md)** — install, launch, options, and a
 > "nothing is happening" checklist. This document is the deep dive: design rationale,
 > datarefs, and how the deck is built.
+>
+> **Testing a change?** [TESTING.md](TESTING.md) is the test card. **Picking the project back up?**
+> [HANDOFF.md](HANDOFF.md) has the current state, what's unverified, and what to do first.
 
 ## Files
 - `QUICKSTART.md` — Short how-to: deploy, launch, the options that matter.
+- `TESTING.md` — Test card: bench procedures, log lines to expect, flight tests.
+- `HANDOFF.md` — Project state, architecture invariants, verification status, next steps.
 - `src/main.lua` — The loader (install this into FlyWithLua Scripts as `random_engine_out.lua`).
 - `src/modules/reo_*.lua` — The deck, emergency catalog, GUI and helpers (install into FlyWithLua `Modules/`). **The script will not run without them** — use the deploy scripts, which copy both.
 - `src/random_engine_out.cfg.example` — Sample per-flight config file (see “Configuring per flight”).

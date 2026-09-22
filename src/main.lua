@@ -181,9 +181,14 @@ if modules_ok then
     gui.init(reo)
 end
 
--- Convenience: the scenario in play (only one exists today).
+-- Convenience: the scenario in play (only one exists today). Guards the empty
+-- string and not just nil — a clean card's event carries scenario = "", which is
+-- truthy in Lua and would slip straight past an `or` fallback, returning nil and
+-- crashing the caller.
 local function current_scenario()
-    return scenarios.get((state.event and state.event.scenario) or "engine_out")
+    local id = state.event and state.event.scenario
+    if id == nil or id == "" then id = "engine_out" end
+    return scenarios.get(id)
 end
 
 -- =============================================================================
@@ -407,6 +412,16 @@ function update_flight_clock()
                         state.target_elapsed / 60, state.flight_elapsed / 60),
                 })
             end
+            -- Disarm before releasing the trigger. process_failure() runs every
+            -- frame and only checks `armed and not failure_triggered` against
+            -- flight_elapsed >= target_elapsed — and after a flight whose card
+            -- already fired, that comparison is still true. Leaving `armed` set
+            -- here re-fired the failure on the next flight's ramp, seconds after
+            -- loading, until try_initialize() got round to re-arming properly.
+            state.armed = false
+            state.clean_flight = false
+            state.flight_elapsed = 0
+            state.airborne = not cfg.require_airborne
             state.failure_triggered = false
             THROTTLE_OVERRIDE = 0
             state.initialized = false -- try_initialize re-arms on its next tick
