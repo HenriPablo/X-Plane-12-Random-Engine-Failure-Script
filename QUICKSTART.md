@@ -136,6 +136,12 @@ and re-armed on your next flight rather than spent, so it can't go missing. And
 failure_deadline_minutes = 18
 ```
 
+Of the two, **the deadline is the one that reduces quiet flights.** Carry-over
+only stops cards being lost — the flight it expired on was still a quiet one. So
+if failures feel too rare, count the `outcome = expired` rows in
+`history.csv`: each one is a flight that went quiet because its card was
+scheduled past your landing. More than a couple means lower the deadline.
+
 ---
 
 ## 5. Your training record

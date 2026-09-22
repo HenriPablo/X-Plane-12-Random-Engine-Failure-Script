@@ -94,7 +94,19 @@ Rather than rolling fresh dice every flight, the script deals from a deck and wr
 
 Both decks are arranged so consecutive flights never repeat the same bucket. Clean cards are exempt — forbidding *those* from repeating would make clean and failure flights alternate, which is its own kind of predictable.
 
-Percentages over a full deck are exact, not merely average. With the defaults you get exactly 1 clean flight in 3, and never two `early` failures back to back.
+Percentages over a full deck are exact **per card dealt**, not merely average: with the defaults, exactly 1 in 3 cards dealt is a clean card, and you never get two `early` failures back to back.
+
+Note the distinction between cards and flights. A clean card resolves the moment it is dealt, so it costs one card and one flight. A failure card that never fires is re-armed next flight *without* a new card being dealt — one card, two or more flights. So with `E` expiries per deck:
+
+```
+flights per deck         = 9 + E
+flights with no failure  = 3 clean + E expired
+quiet-flight rate        = (3 + E) / (9 + E)
+```
+
+At `E = 0` that's the advertised 33%. At `E = 3` it's 50%. **This is the number that matters if failures feel too rare** — and the knob that fixes it is `failure_deadline_minutes`, not the deck. Carry-over guarantees you never *lose* a card; it does nothing to stop a card being scheduled past the end of your flight in the first place.
+
+`E` is not guesswork: it is the number of `outcome = expired` rows in `random_engine_out.history.csv`. Count them, and if there are more than a couple, lower `failure_deadline_minutes` to match your real airborne time.
 
 ### Held-over cards
 

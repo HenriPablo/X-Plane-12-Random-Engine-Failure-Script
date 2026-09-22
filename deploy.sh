@@ -14,6 +14,7 @@ XPLANE_PATH="${HOME}/X-Plane 12"
 SCRIPT_NAME="random_engine_out.lua"
 FORCE=0
 DRY_RUN=0
+SELF_TEST=0
 
 info() { printf '[deploy] %s\n' "$1"; }
 warn() { printf '[deploy] WARN: %s\n' "$1" >&2; }
@@ -23,6 +24,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --xplane-path) XPLANE_PATH="$2"; shift 2 ;;
         --script-name) SCRIPT_NAME="$2"; shift 2 ;;
+        --self-test) SELF_TEST=1; shift ;;
         --force)       FORCE=1; shift ;;
         --dry-run)     DRY_RUN=1; shift ;;
         -h|--help)
@@ -118,6 +120,24 @@ if [[ -d "${SRC_MODULES_DIR}" ]]; then
     done
 else
     warn "No modules directory at ${SRC_MODULES_DIR} - the script will not run without it."
+fi
+
+# Opt-in self-test: runs once at load and writes a PASS/FAIL block to Log.txt.
+# Off by default so it never runs during real practice; delete
+# Scripts/reo_selftest.lua to remove it.
+if [[ "${SELF_TEST}" -eq 1 ]]; then
+    SELF_TEST_SRC="${PROJECT_ROOT}/src/selftest/reo_selftest.lua"
+    SELF_TEST_TARGET="${TARGET_DIR}/reo_selftest.lua"
+    if [[ -f "${SELF_TEST_SRC}" ]]; then
+        if [[ "${DRY_RUN}" -eq 1 ]]; then
+            info "Would copy self-test reo_selftest.lua -> ${SELF_TEST_TARGET}"
+        else
+            info "Copying self-test reo_selftest.lua -> ${SELF_TEST_TARGET}"
+            cp -f "${SELF_TEST_SRC}" "${SELF_TEST_TARGET}"
+        fi
+    else
+        warn "No self-test found at ${SELF_TEST_SRC}"
+    fi
 fi
 
 echo ""

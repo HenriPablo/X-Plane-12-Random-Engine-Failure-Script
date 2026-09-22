@@ -23,6 +23,46 @@ dir "C:\X-Plane 12\Resources\plugins\FlyWithLua\Modules\reo_*.lua"
 You should see five modules: `reo_util`, `reo_deck`, `reo_scenarios`,
 `reo_history`, `reo_gui`.
 
+### Test 0 — run the logic self-test first
+
+Before any of the sim tests, prove the pure logic. Deploy with the self-test
+included, start X-Plane, and read the result:
+
+```cmd
+deploy.bat -SelfTest
+:: start X-Plane, then:
+findstr /C:"REO SELFTEST" "C:\X-Plane 12\Log.txt"
+```
+
+Expect every line to read `[PASS]` and the tally to say `0 failed`:
+
+```
+=== REO SELFTEST starting ===
+REO SELFTEST [PASS] anti-adjacency: 10000 arrangements, 0 violations
+REO SELFTEST [PASS] composition c=0.35: 9 cards (early=2 mid=2 late=2 clean=3, expected clean=3)
+...
+=== REO SELFTEST --- 19 passed, 0 failed --- ===
+```
+
+This exercises the deck's guarantees — exact card ratios, no consecutive
+repeats across deck recycles, CSV escaping, the deadline/quiet-time precedence —
+thousands of times in about a second. **A `[FAIL]` line names the broken property
+outright, which is far cheaper than discovering it over a dozen flights.**
+
+It loads a private copy of each module via `loadfile` and never calls
+`load_state`/`save_state`, so it cannot disturb the live script or your real
+deck. Confirm that: `random_engine_out.state`'s timestamp should be unchanged
+(or the file still absent on a first run).
+
+Remove it when you're done — it is not part of a normal install:
+
+```cmd
+del "C:\X-Plane 12\Resources\plugins\FlyWithLua\Scripts\reo_selftest.lua"
+```
+
+It does **not** cover the history CSV's file I/O, the GUI, the throttle
+enforcement loop, the flight clock or the trigger path. Those are tests 1–16.
+
 ### Bench config — fires in ~15 seconds on the ramp
 
 Put this in `<X-Plane>\Resources\plugins\FlyWithLua\Scripts\random_engine_out.cfg`:
